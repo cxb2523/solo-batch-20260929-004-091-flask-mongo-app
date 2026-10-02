@@ -11,7 +11,7 @@ class Note():
         self.user_id = user_id
         self.user_name = user_name
         self.timestamp = datetime.utcnow()
-        self.date_string = self.timestamp.strftime("%-d %b %Y")
+        self.date_string = self.timestamp.strftime("%d %b %Y").lstrip("0")
         self.id = uuid.uuid4().hex if not id else id
         self.deleted = deleted
 

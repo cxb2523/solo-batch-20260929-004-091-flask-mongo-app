@@ -20,5 +20,74 @@
             </div>
         </div>
     </div>
+    <div class="row">
+        <div class="col-md-8 mx-md-auto mb-5">
+            <div id="status-bar" class="d-flex flex-wrap align-items-center justify-content-between border rounded p-3 bg-light">
+                <div class="d-flex align-items-center flex-wrap">
+                    <span class="font-weight-bold mr-2">Backend:</span>
+                    <span id="status-backend" class="badge {{ 'badge-success' if backend == 'mongo' else 'badge-warning' }} mr-3">{{ backend }}</span>
+                    <span class="font-weight-bold mr-2">Notes:</span>
+                    <span id="status-notes-count" class="badge badge-primary mr-3">{{ notes_count }}</span>
+                    <span class="font-weight-bold mr-2">Messages:</span>
+                    <span id="status-messages-count" class="badge badge-primary mr-3">{{ messages_count }}</span>
+                </div>
+                <div class="d-flex align-items-center flex-wrap mt-2 mt-md-0">
+                    <button id="add-note-btn" class="btn btn-sm btn-primary mr-2">Add note</button>
+                    <button id="delete-note-btn" class="btn btn-sm btn-danger mr-3" disabled>Delete note</button>
+                    <button id="add-message-btn" class="btn btn-sm btn-primary mr-2">Add message</button>
+                    <button id="delete-message-btn" class="btn btn-sm btn-danger" disabled>Delete message</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+<script>
+(function () {
+    var lastNoteId = null;
+    var lastMessageId = null;
+
+    function renderStatus(data) {
+        var backendBadge = document.getElementById("status-backend");
+        backendBadge.textContent = data.backend;
+        backendBadge.className = "badge mr-3 " + (data.backend === "mongo" ? "badge-success" : "badge-warning");
+        document.getElementById("status-notes-count").textContent = data.notes;
+        document.getElementById("status-messages-count").textContent = data.messages;
+        if (data.note_id) {
+            lastNoteId = data.note_id;
+        }
+        if (data.message_id) {
+            lastMessageId = data.message_id;
+        }
+        document.getElementById("delete-note-btn").disabled = !lastNoteId;
+        document.getElementById("delete-message-btn").disabled = !lastMessageId;
+    }
+
+    function post(url) {
+        return fetch(url, { method: "POST" }).then(function (response) {
+            return response.json();
+        }).then(renderStatus);
+    }
+
+    document.getElementById("add-note-btn").addEventListener("click", function () {
+        post("/api/notes");
+    });
+    document.getElementById("delete-note-btn").addEventListener("click", function () {
+        if (lastNoteId) {
+            post("/api/notes/" + lastNoteId + "/delete");
+        }
+    });
+    document.getElementById("add-message-btn").addEventListener("click", function () {
+        post("/api/messages");
+    });
+    document.getElementById("delete-message-btn").addEventListener("click", function () {
+        if (lastMessageId) {
+            post("/api/messages/" + lastMessageId + "/delete");
+        }
+    });
+
+    fetch("/api/status").then(function (response) {
+        return response.json();
+    }).then(renderStatus);
+})();
+</script>
 {% endblock %}

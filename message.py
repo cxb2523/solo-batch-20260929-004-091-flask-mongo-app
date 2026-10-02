@@ -14,7 +14,7 @@ class Message():
         self.to_id = to_id
         self.to_name = to_name
         self.timestamp = datetime.utcnow()
-        self.date_string = self.timestamp.strftime("%-d %b %Y %H:%M")
+        self.date_string = self.timestamp.strftime("%d %b %Y %H:%M").lstrip("0")
         self.id = uuid.uuid4().hex if not id else id
         self.deleted = deleted
         self.hidden_for_sender = hidden_for_sender

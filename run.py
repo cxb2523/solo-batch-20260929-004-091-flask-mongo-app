@@ -4,7 +4,6 @@
 from flask import Flask, render_template, request, url_for, request, redirect, abort
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_talisman import Talisman
-from flask_pymongo import PyMongo
 from flask_bcrypt import Bcrypt
 from flask_wtf.csrf import CSRFProtect
 
@@ -17,6 +16,7 @@ import sys
 import os
 
 # Local imports
+import repositories
 from user import User, Anonymous
 from message import Message
 from note import Note
@@ -33,11 +33,14 @@ config.read('configuration.ini')
 default = config['DEFAULT']
 app.secret_key = default['SECRET_KEY']
 app.config['MONGO_DBNAME'] = os.environ.get('MONGO_DBNAME')
-app.config['MONGO_URI'] = os.environ.get('MONGODB_URI') #default['MONGO_URI']
+app.config['MONGO_URI'] = os.environ.get('MONGO_URI') or os.environ.get('MONGODB_URI') #default['MONGO_URI']
 app.config['PREFERRED_URL_SCHEME'] = "https"
 
-# Create Pymongo
-mongo = PyMongo(app)
+# Inject repositories (MongoDB backend selected by MONGO_URI, with
+# automatic fallback to the in-memory backend on failure)
+repos = repositories.build_repositories(
+    app.config['MONGO_URI'],
+    db_name=app.config['MONGO_DBNAME'] or repositories.DEFAULT_DB_NAME)
 
 # Create Bcrypt
 bc = Bcrypt(app)
@@ -70,7 +73,10 @@ login_manager.login_view = "login"
 # Index
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html',
+                           backend=repos.backend_name,
+                           notes_count=repos.notes.count(),
+                           messages_count=repos.messages.count())
 
 
 # Login
@@ -83,8 +89,7 @@ def login():
         # Render login page
         return render_template('login.html', error=request.args.get("error"))
     # Retrieve user from database
-    users = mongo.db.users
-    user_data = users.find_one({'email': request.form['email']}, {'_id': 0})
+    user_data = repos.users.find_by_email(request.form['email'])
     if user_data:
         # Check password hash
         if bc.check_password_hash(user_data['password'], request.form['pass']):
@@ -115,10 +120,8 @@ def register():
         last_name = request.form['last_name'].strip()
         password = request.form['pass'].strip()
 
-        users = mongo.db.users
         # Check if email address already exists
-        existing_user = users.find_one(
-            {'email': email}, {'_id': 0})
+        existing_user = repos.users.find_by_email(email)
 
         if existing_user is None:
             logout_user()
@@ -131,7 +134,7 @@ def register():
             user_data_to_save['password'] = hashpass
 
             # Insert user record to database
-            if users.insert_one(user_data_to_save):
+            if repos.users.insert(user_data_to_save):
                 login_user(new_user)
                 send_registration_email(new_user)
                 return redirect(url_for('profile'))
@@ -153,7 +156,7 @@ def confirm_email(token):
     try:
         email = confirm_token(token)
         if email:
-            if mongo.db.users.update_one({"email": email}, {"$set": {"verified": True}}):
+            if repos.users.verify(email):
                 return render_template('confirm.html', success=True)
     except:
         return render_template('confirm.html', success=False)
@@ -176,8 +179,7 @@ def send_verification_email():
 @app.route('/profile', methods=['GET'])
 @login_required
 def profile():
-    notes = mongo.db.notes.find(
-        {"user_id": current_user.id, "deleted": False}).sort("timestamp", -1)
+    notes = repos.notes.find_active_for_user(current_user.id)
     return render_template('profile.html', notes=notes, title=current_user.title)
 
 
@@ -185,12 +187,9 @@ def profile():
 @app.route('/messages', methods=['GET'])
 @login_required
 def messages():
-    all_users = mongo.db.users.find(
-        {"id": {"$ne": current_user.id}}, {'_id': 0})
-    inbox_messages = mongo.db.messages.find(
-        {"to_id": current_user.id, "deleted": False}).sort("timestamp", -1)
-    sent_messages = mongo.db.messages.find(
-        {"from_id": current_user.id, "deleted": False, "hidden_for_sender": False}).sort("timestamp", -1)
+    all_users = repos.users.find_all_except(current_user.id)
+    inbox_messages = repos.messages.find_inbox(current_user.id)
+    sent_messages = repos.messages.find_sent(current_user.id)
     return render_template('messages.html', users=all_users, inbox_messages=inbox_messages, sent_messages=sent_messages)
 
 
@@ -213,7 +212,7 @@ def add_note():
     user_id = current_user.id
     user_name = current_user.display_name()
     note = Note(title, body, user_id, user_name)
-    if mongo.db.notes.insert_one(note.dict()):
+    if repos.notes.insert(note.dict()):
         return "Success! Note added: " + title
     else:
         return "Error! Could not add note"
@@ -224,7 +223,7 @@ def add_note():
 @login_required
 def delete_note():
     note_id = request.form.get("note_id")
-    if mongo.db.notes.update_one({"id": note_id}, {"$set": {"deleted": True}}):
+    if repos.notes.soft_delete(note_id):
         return "Success! Note deleted"
     else:
         return "Error! Could not delete note"
@@ -239,11 +238,11 @@ def send_message():
     from_id = current_user.id
     from_name = current_user.display_name()
     to_id = request.form.get("user")
-    to_user_dict = mongo.db.users.find_one({"id": to_id})
+    to_user_dict = repos.users.find_by_id(to_id)
     to_user = User.make_from_dict(to_user_dict)
     to_name = to_user.display_name()
     message = Message(title, body, from_id, from_name, to_id, to_name)
-    if mongo.db.messages.insert_one(message.dict()):
+    if repos.messages.insert(message.dict()):
         send_message_email(from_user=current_user,
                            to_user=to_user, message=message)
         return "Success! Message sent to " + to_name + ": " + title
@@ -256,7 +255,7 @@ def send_message():
 @login_required
 def delete_message():
     message_id = request.form.get("message_id")
-    if mongo.db.messages.update_one({"id": message_id}, {"$set": {"deleted": True}}):
+    if repos.messages.soft_delete(message_id):
         return "Success! Message deleted"
     else:
         return "Error! Could not delete message"
@@ -267,7 +266,7 @@ def delete_message():
 @login_required
 def hide_sent_message():
     message_id = request.form.get("message_id")
-    if mongo.db.messages.update_one({"id": message_id}, {"$set": {"hidden_for_sender": True}}):
+    if repos.messages.hide_for_sender(message_id):
         return "Success! Message hidden from sender"
     else:
         return "Error! Could not hide message"
@@ -281,7 +280,7 @@ def change_name():
     first_name = request.form['first_name'].strip()
     last_name = request.form['last_name'].strip()
 
-    if mongo.db.users.update_one({"email": current_user.email}, {"$set": {"title": title, "first_name": first_name, "last_name": last_name}}):
+    if repos.users.update_name(current_user.email, title, first_name, last_name):
         return "User name updated successfully"
     else:
         return "Error! Could not update user name"
@@ -299,16 +298,16 @@ def delete_account():
     messages_deleted = False
 
     # Delete user details
-    if mongo.db.users.delete_one({"id": user_id}):
+    if repos.users.delete(user_id):
         user_deleted = True
         logout_user()
 
     # Delete notes
-    if mongo.db.notes.delete_many({"user_id": user_id}):
+    if repos.notes.delete_for_user(user_id):
         notes_deleted = True
 
     # Delete messages
-    if mongo.db.messages.delete_many({"$or": [{"from_id": user_id}, {"to_id": user_id}]}):
+    if repos.messages.delete_for_user(user_id):
         messages_deleted = True
 
     return {"user_deleted": user_deleted, "notes_deleted": notes_deleted, "messages_deleted": messages_deleted}
@@ -320,11 +319,73 @@ def delete_account():
 @login_manager.user_loader
 def load_user(userid):
     # Return user object or none
-    users = mongo.db.users
-    user = users.find_one({'id': userid}, {'_id': 0})
+    user = repos.users.find_by_id(userid)
     if user:
         return User.make_from_dict(user)
     return None
+
+
+# STATUS BAR JSON API
+
+# Demo identity used by the index-page status bar (no login required)
+DEMO_USER_ID = "status-bar-demo"
+DEMO_USER_NAME = "Status Bar Demo"
+
+
+def _status_payload(**extra):
+    payload = {
+        "backend": repos.backend_name,
+        "notes": repos.notes.count(),
+        "messages": repos.messages.count(),
+    }
+    payload.update(extra)
+    return payload
+
+
+# Backend status and record counts
+@app.route('/api/status', methods=['GET'])
+@csrf.exempt
+def api_status():
+    return _status_payload()
+
+
+# Add a demo note from the status bar
+@app.route('/api/notes', methods=['POST'])
+@csrf.exempt
+def api_add_note():
+    title = request.form.get("title") or "Status bar note"
+    body = request.form.get("body") or ""
+    note = Note(title, body, DEMO_USER_ID, DEMO_USER_NAME)
+    success = repos.notes.insert(note.dict())
+    return _status_payload(success=success, note_id=note.id)
+
+
+# Delete a note from the status bar
+@app.route('/api/notes/<note_id>/delete', methods=['POST'])
+@csrf.exempt
+def api_delete_note(note_id):
+    success = repos.notes.soft_delete(note_id)
+    return _status_payload(success=success, note_id=note_id)
+
+
+# Add a demo message from the status bar
+@app.route('/api/messages', methods=['POST'])
+@csrf.exempt
+def api_add_message():
+    title = request.form.get("title") or "Status bar message"
+    body = request.form.get("body") or ""
+    message = Message(title, body, DEMO_USER_ID, DEMO_USER_NAME,
+                      DEMO_USER_ID, DEMO_USER_NAME)
+    success = repos.messages.insert(message.dict())
+    return _status_payload(success=success, message_id=message.id)
+
+
+# Delete a message from the status bar
+@app.route('/api/messages/<message_id>/delete', methods=['POST'])
+@csrf.exempt
+def api_delete_message(message_id):
+    success = repos.messages.soft_delete(message_id)
+    return _status_payload(success=success, message_id=message_id)
 
 
 # Safe URL
@@ -335,9 +396,10 @@ def is_safe_url(target):
         ref_url.netloc == test_url.netloc
 
 
-# Heroku environment
-if os.environ.get('APP_LOCATION') == 'heroku':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-else:
-    app.run(host='localhost', port=8080, debug=True)
+if __name__ == '__main__':
+    # Heroku environment
+    if os.environ.get('APP_LOCATION') == 'heroku':
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port)
+    else:
+        app.run(host='localhost', port=8080, debug=True)
