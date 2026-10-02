@@ -1,6 +1,29 @@
 {% extends "layout.html" %}
 {% block body %}
 <div class="container">
+    <div class="row pt-5">
+        <div class="col-12">
+            <div id="backend-status-bar" class="alert alert-info d-flex flex-wrap align-items-center justify-content-between mt-3" data-backend="{{ backend_status.backend }}" data-note-count="{{ backend_status.note_count }}" data-message-count="{{ backend_status.message_count }}">
+                <div>
+                    <strong>Backend:</strong>
+                    <span id="backend-name">{{ backend_status.backend_label }}</span>
+                    {% if backend_status.degraded %}
+                    <span class="badge badge-warning ml-2">degraded</span>
+                    {% endif %}
+                    &nbsp;|&nbsp;
+                    <strong>Notes:</strong> <span id="note-count">{{ backend_status.note_count }}</span>
+                    &nbsp;
+                    <strong>Messages:</strong> <span id="message-count">{{ backend_status.message_count }}</span>
+                </div>
+                <div class="mt-2 mt-md-0">
+                    <button type="button" class="btn btn-sm btn-primary add-note-demo">Add note</button>
+                    <button type="button" class="btn btn-sm btn-danger delete-note-demo">Delete note</button>
+                    <button type="button" class="btn btn-sm btn-primary add-message-demo">Add message</button>
+                    <button type="button" class="btn btn-sm btn-danger delete-message-demo">Delete message</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div class="row">
         <div class="col-md-5 mx-md-auto pt-5">
             <h1 class="text-primary">Welcome!</h1>

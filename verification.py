@@ -1,9 +1,10 @@
 from itsdangerous import URLSafeTimedSerializer
 import configparser
+import os
 
 # Configuration
 config = configparser.ConfigParser()
-config.read('configuration.ini')
+config.read(os.path.join(os.path.dirname(__file__), 'configuration.ini'))
 default = config['DEFAULT']
 SECRET_KEY = default['SECRET_KEY']
 SECURITY_PASSWORD_SALT = default['SECURITY_PASSWORD_SALT']

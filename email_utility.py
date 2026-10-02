@@ -44,6 +44,7 @@ def send_email(receiver_email, subject, plaintext, html):
     context = ssl.create_default_context()
 
     # Try to log in to server and send email
+    server = None
     try:
         server = smtplib.SMTP(SMTP_SERVER, PORT)
         server.ehlo()
@@ -56,8 +57,9 @@ def send_email(receiver_email, subject, plaintext, html):
         print(e)
         return False
     finally:
-        server.quit()
-        return True
+        if server is not None:
+            server.quit()
+    return True
 
 
 # Convenience function - registration / verification email

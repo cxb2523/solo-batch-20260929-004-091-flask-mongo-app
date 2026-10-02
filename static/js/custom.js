@@ -1,6 +1,42 @@
 $(document).ready(function() {
     console.log("Ready!");
 
+    // Index status bar - refresh backend name and counters from a JSON payload
+    function updateBackendStatus(status) {
+        if (!status) return;
+        $("#backend-name").text(status.backend_label);
+        $("#note-count").text(status.note_count);
+        $("#message-count").text(status.message_count);
+        $("#backend-status-bar")
+            .attr("data-backend", status.backend)
+            .attr("data-note-count", status.note_count)
+            .attr("data-message-count", status.message_count);
+    }
+
+    function statusBarAction(url) {
+        $.post(url)
+            .done(function(response) {
+                console.log(response);
+                updateBackendStatus(response);
+            })
+            .fail(function(response) {
+                console.log(response);
+            });
+    }
+
+    $("button.add-note-demo").click(function() {
+        statusBarAction("/api/add_note");
+    });
+    $("button.delete-note-demo").click(function() {
+        statusBarAction("/api/delete_note");
+    });
+    $("button.add-message-demo").click(function() {
+        statusBarAction("/api/add_message");
+    });
+    $("button.delete-message-demo").click(function() {
+        statusBarAction("/api/delete_message");
+    });
+
 
     // Manage edit-name-button text
     $('#edit-name').on('hide.bs.collapse', function() {
